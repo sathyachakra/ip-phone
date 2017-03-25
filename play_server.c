@@ -17,8 +17,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-
-#define MAXDATASIZE 1024
+#include <sys/time.h>
+#include <event.h>
 
 #define PORT "3490"  // the port users will be connecting to
 
@@ -26,20 +26,24 @@
 
 #define BUFSIZE 1024
 
-static ssize_t loop_write(int fd, const uint8_t *data, size_t size) {
-    ssize_t ret = 0;
-    while (size > 0) {
-        ssize_t r;
-        if ((r = write(fd, data, size)) < 0)
-            return r;
-        if (r == 0)
-            break;
-        ret += r;
-        data = (const uint8_t*) data + r;
-        size -= (size_t) r;
-    }
-    return ret;
+#if 0
+static ssize_t loop_write(int fd, const uint8_t *data, size_t size)
+{
+	ssize_t ret = 0;
+	while (size > 0)
+	{
+		ssize_t r;
+		if ((r = write(fd, data, size)) < 0)
+			return r;
+		if (r == 0)
+			break;
+		ret += r;
+		data = (const uint8_t*) data + r;
+		size -= (size_t) r;
+	}
+	return ret;
 }
+#endif
 
 void *get_in_addr(struct sockaddr *sa)					//get ipv4 or ipv6 address
 {
@@ -50,43 +54,103 @@ void *get_in_addr(struct sockaddr *sa)					//get ipv4 or ipv6 address
     return &(((struct sockaddr_in6*)sa)->sin6_addr);	//ipv6 addr
 }
 
-int main(int argc, char const *argv[])
-{
-	int sockfd,clifd;						//socket fd's
+
+/***************************************************
+Global declarations - actually should be inside main 
+****************************************************/
+	int sockfd=0,clifd=0;					//socket fd's
 	struct addrinfo hints,*servinfo,*p;		//type of addr, server addr, iterator
 	struct sockaddr_storage cliaddr;		//client socket
-	socklen_t cli_size;						//clint size
-	//struct sigaction sa;
-	int yes=1;
-	char ser_addr_str[INET6_ADDRSTRLEN];
+	socklen_t cli_size;						//client size
+	int yes=1;								//optval attribute for setsockopt()
+	char ser_addr_str[INET6_ADDRSTRLEN];	//ip addr in string format
 	int ret_val;
-	//char buffer[250];						//buffer to store data
+	/* The Sample format to use */
+	static const pa_sample_spec ss = {
+		.format = PA_SAMPLE_S16LE,
+		.rate = 44100,
+		.channels = 2
+	};
+	pa_simple *s = NULL;					//to store playback stream
+	int error;
+	//struct timeval t1,t2;
+	/*int wr_fp;							//to file*/
+	
+	uint8_t buf[BUFSIZE];
+	ssize_t num_bytes_recv;
+/****************************************************
+End of Global declarations
+****************************************************/
+
+void recv_play(int fd, short event, void *arg)
+{
+	/*gettimeofday(&t1,NULL);*/
+	if((num_bytes_recv = recv(clifd,buf,sizeof buf,0))==-1)	//receive data
+	{
+		perror("recv");
+		exit(1);
+	}
+	/*gettimeofday(&t2,NULL);
+	printf("receive:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
+	if(!strcmp(buf,"EXIT"))
+	{
+		printf("call disconnected\n");
+		if(s)
+			pa_simple_free(s);
+		if (sockfd)
+			close(sockfd);
+		exit(1);
+	}
+	else
+	{
+		/*... and play it */
+		//gettimeofday(&t1,NULL);
+		if (pa_simple_write(s, buf, (size_t) num_bytes_recv, &error) < 0)
+		{
+			fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
+			if(s)
+				pa_simple_free(s);
+			if (sockfd)
+				close(sockfd);
+			exit(1);
+		}
+		/*gettimeofday(&t2,NULL);
+		printf("play:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
+		#if 0
+			/* And write it to STDOUT */
+			if (loop_write(STDOUT_FILENO, buf, sizeof(buf)) != sizeof(buf))
+			{
+				fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
+				goto finish;
+			}
+		#endif
+	}
+}
+
+int main(int argc, char const *argv[])
+{
+	
 
 	memset(&hints,0,sizeof(hints));			//initialize to 0
 	hints.ai_family = AF_UNSPEC;			//any address family
 	hints.ai_socktype = SOCK_STREAM;		//tcp
 	hints.ai_flags = AI_PASSIVE;
 
-/* The Sample format to use */
-    static const pa_sample_spec ss = {
-        .format = PA_SAMPLE_S16LE,
-        .rate = 44100,
-        .channels = 2
-    };
-    pa_simple *s = NULL;
-    int ret = 1;
-    int error;
-    
-    int wr_fp;
+
 
     /* Create a new playback stream */
-    if (!(s = pa_simple_new(NULL, argv[0], PA_STREAM_PLAYBACK, NULL, "playback", &ss, NULL, NULL, &error))) {
-        fprintf(stderr, __FILE__": pa_simple_new() failed: %s\n", pa_strerror(error));
-        goto finish;
+    if (!(s = pa_simple_new(NULL, argv[0], PA_STREAM_PLAYBACK, NULL, "playback", &ss, NULL, NULL, &error)))
+    {
+        fprintf(stderr, __FILE__": pa_simple_new() failed: %s\n", pa_strerror(error));	//display the error
+		if(s)
+			pa_simple_free(s);
+		if(sockfd)
+			close(sockfd);
+		exit(1);
     }
 
-	//create socket and bind
-	if((ret_val = getaddrinfo(NULL,PORT,&hints,&servinfo))!=0)		//error in getting addr
+	/*create socket and bind*/
+	if((ret_val = getaddrinfo(NULL,PORT,&hints,&servinfo))!=0)		//get possible addrs
 	{
 		fprintf(stderr, "getaddrinfo:%s\n", gai_strerror(ret_val));
 		return 1;
@@ -106,7 +170,7 @@ int main(int argc, char const *argv[])
 			exit(1);
 		}
 		//printf("socket:%d\n",sockfd );
-		if(bind(sockfd,p->ai_addr,p->ai_addrlen)==-1)							//vind socket
+		if(bind(sockfd,p->ai_addr,p->ai_addrlen)==-1)							//bind socket
 		{
 			close(sockfd);
 			perror("server:bind");
@@ -128,17 +192,18 @@ int main(int argc, char const *argv[])
 		exit(1);
 	}
 	printf("waiting for connections\n");
-	//socket created, bound and listening
-
-
-
-	//*************
-	//*************
-
-
-
-	
-    //receive data
+	/*socket created, bound and listening
+	*
+	*
+	*
+	*************************************
+	*All primitive connections made with OS
+	*************************************
+	*
+	*
+	*
+	*
+    *receive data*/
     cli_size = sizeof(cliaddr);
 	while((clifd = accept(sockfd,(struct sockaddr*)&cliaddr,&cli_size))==-1)	//accept connection
 	{
@@ -148,7 +213,8 @@ int main(int argc, char const *argv[])
 
 	inet_ntop(cliaddr.ss_family,get_in_addr((struct sockaddr *)&cliaddr),ser_addr_str, sizeof ser_addr_str);		//change to char string. store in "s"
 	printf("server got connection from %s\n", ser_addr_str);
-	if ((wr_fp = open("recording.raw", O_CREAT|O_WRONLY)) < 0) {
+#if 0	
+		if ((wr_fp = open("recording.raw", O_CREAT|O_WRONLY)) < 0) {
         fprintf(stderr, __FILE__": open() failed: %s\n", strerror(errno));
         goto finish;
     }
@@ -157,39 +223,75 @@ int main(int argc, char const *argv[])
         goto finish;
     }
     close(wr_fp);
-for (;;)
-    {
-		uint8_t buf[BUFSIZE];
-		ssize_t num_bytes_recv;
-		
-		while(1)
+#endif
+	
+#if 0	
+	while(1)
+	{
+		/*gettimeofday(&t1,NULL);*/
+		if((num_bytes_recv = recv(clifd,buf,sizeof buf,0))==-1)	//receive data
 		{
-			if((num_bytes_recv = recv(clifd,buf,sizeof buf,0))==-1)	//receive data
+			perror("recv");
+			exit(1);
+		}
+		/*gettimeofday(&t2,NULL);
+		printf("receive:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
+		if(!strcmp(buf,"EXIT"))
+		{
+			printf("call disconnected\n");
+			if(s)
+				pa_simple_free(s);
+			if (sockfd)
+				close(sockfd);
+			exit(1);
+		}
+		else
+		{
+			/*... and play it */
+			//gettimeofday(&t1,NULL);
+			if (pa_simple_write(s, buf, (size_t) num_bytes_recv, &error) < 0)
 			{
-				perror("recv");
+				fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
+				if(s)
+					pa_simple_free(s);
+				if (sockfd)
+					close(sockfd);
 				exit(1);
 			}
-
-			/* And write it to STDOUT */
-			if (loop_write(STDOUT_FILENO, buf, sizeof(buf)) != sizeof(buf))
-			{
-				fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
-				goto finish;
-			}
+			/*gettimeofday(&t2,NULL);
+			printf("play:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
+			#if 0
+				/* And write it to STDOUT */
+				if (loop_write(STDOUT_FILENO, buf, sizeof(buf)) != sizeof(buf))
+				{
+					fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
+					goto finish;
+				}
+			#endif
 		}
 
-#if	0	//... and play it 
-		if (pa_simple_write(s, buf, (size_t) num_bytes_recv, &error) < 0)
-		{
-			fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
-			goto finish;
-		}
-#endif
 	}
+#endif
 
+	struct event ev;
+	struct timeval tv;
 
-finish:
-	if(s)
-		pa_simple_free(s);
-	close(sockfd);
+	tv.tv_sec = 0;
+	tv.tv_usec = 100;
+
+	event_init();
+	event_set(&ev,0,EV_PERSIST,recv_play,NULL);
+	/*evtimer_set(&ev, say_hello, NULL);*/
+	evtimer_add(&ev, &tv);
+	event_dispatch();
+
+	if (pa_simple_drain(s, &error) < 0)
+	{
+		fprintf(stderr, __FILE__": pa_simple_drain() failed: %s\n", pa_strerror(error));
+		if(s)
+			pa_simple_free(s);
+		if (sockfd)
+			close(sockfd);
+		exit(1);
+	}
 }

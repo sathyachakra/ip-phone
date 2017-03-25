@@ -16,11 +16,25 @@
 #include <sys/socket.h>
 #include <signal.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
+#include <event.h>
 
 #define PORT "3490"
-#define MAXDATASIZE 1024
 #define BUFSIZE 1024
 int sockfd,sock_set_flag = 0;
+
+void sig_handler()          //signal handler
+{
+    char c;
+    printf("Do you really want to exit?[y/n]\n");
+    scanf("%c",&c);
+    if(c=='y' || c=='Y')
+    {
+        if(sock_set_flag)
+            send(sockfd,"EXIT",4,0);     //send exit message to server
+        exit(0);
+    }
+}
 
 void *get_in_addr(struct sockaddr *sa)   //ipv4 or v6
 {
@@ -31,7 +45,8 @@ void *get_in_addr(struct sockaddr *sa)   //ipv4 or v6
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-static ssize_t loop_write(int fd, const uint8_t *data, size_t size) {
+static ssize_t loop_write(int fd, const uint8_t *data, size_t size)
+{
     ssize_t ret = 0;
     while (size > 0) {
         ssize_t r;
@@ -46,22 +61,63 @@ static ssize_t loop_write(int fd, const uint8_t *data, size_t size) {
     return ret;
 }
 
-int main(int argc,char *argv[])
-{
-	static const pa_sample_spec ss = {
+
+
+/***************************************************
+Global declarations - actually should be inside main 
+****************************************************/
+    static const pa_sample_spec ss = {
         .format = PA_SAMPLE_S16LE,
         .rate = 44100,
         .channels = 2
     };
-    pa_simple *s = NULL;
-    int ret = 1;
+    pa_simple *s = NULL;                    //playback stream
     int error;
-	struct addrinfo hints, *servinfo, *p;  //type of addr, server addr, iterator
-	int ret_val;
-	char ser_addr_str[INET6_ADDRSTRLEN];
+    struct addrinfo hints, *servinfo, *p;   //type of addr, server addr, iterator
+    int ret_val;
+    char ser_addr_str[INET6_ADDRSTRLEN];    //ip address in string
+    //struct timeval t1,t2;
+/****************************************************
+End of Global declarations
+****************************************************/
 
+void rec_send(int fd, short event, void *arg)
+{
+    uint8_t buf[BUFSIZE];
+        /* Record some data ... */
+        //gettimeofday(&t1,NULL);
+        if (pa_simple_read(s, buf, sizeof(buf), &error) < 0)
+        {
+            fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
+            if (s)
+                pa_simple_free(s);
+            if (sock_set_flag)
+                close(sockfd);
+            exit(1);
+        }
+        /*gettimeofday(&t2,NULL);
+        printf("record:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
+        /* And write it through sockfd */
+        //gettimeofday(&t1,NULL);
+        if (loop_write(sockfd, buf, sizeof(buf)) != sizeof(buf))
+        {
+            fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
+            if (s)
+                pa_simple_free(s);
+            if (sock_set_flag)
+                close(sockfd);
+            exit(1);
+        }
+        /*gettimeofday(&t2,NULL);
+        printf("send:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
+}
+
+int main(int argc,char *argv[])
+{
+    
 	
-	if (argc != 2) {
+	if (argc != 2)                          //check if ip address is passed
+    {
         fprintf(stderr,"usage: client hostname\n");
         exit(1);
     }
@@ -70,8 +126,22 @@ int main(int argc,char *argv[])
     hints.ai_socktype = SOCK_STREAM;       //tcp
 
 
-    //create a socket and connect it to server
+    signal(SIGINT,sig_handler);            //bind signal handler to Ctrl-C
 
+
+    /* Create the recording stream */
+    if (!(s = pa_simple_new(NULL, argv[0], PA_STREAM_RECORD, NULL, "record", &ss, NULL, NULL, &error)))
+    {
+        fprintf(stderr, __FILE__": pa_simple_new() failed: %s\n", pa_strerror(error));
+        if (s)
+            pa_simple_free(s);
+        if (sock_set_flag)
+            close(sockfd);
+        exit(1);
+    }
+
+
+    /*create a socket and connect it to server*/
     if((ret_val = getaddrinfo(argv[1],PORT,&hints,&servinfo))!=0)   //error in getting address
     {
     	fprintf(stderr, "getaddrinfo:%s\n", gai_strerror(ret_val));
@@ -86,7 +156,7 @@ int main(int argc,char *argv[])
     		continue;
     	}
 
-    	if(connect(sockfd,p->ai_addr,p->ai_addrlen) == -1) //error in connection
+    	if(connect(sockfd,p->ai_addr,p->ai_addrlen) == -1) //connect socket to address
     	{
     		close(sockfd);
     		perror("client:connect");
@@ -105,38 +175,56 @@ int main(int argc,char *argv[])
     inet_ntop(p->ai_family,get_in_addr((struct sockaddr *)p->ai_addr),ser_addr_str,sizeof(ser_addr_str)); //addr to string
     printf("client:connecting to %s\n", ser_addr_str);
 
-    freeaddrinfo(servinfo); //server info no longer reqd
-	//connection created
+    freeaddrinfo(servinfo); //server info no longer required
+    /* connection created
+    *
+    *
+    ********************************
+    *All primitive connections done
+    ********************************
+    *
+    * 
+    * record and send*/
+    struct event ev;
+    struct timeval tv;
 
-
-    /* Create the recording stream */
-    if (!(s = pa_simple_new(NULL, argv[0], PA_STREAM_RECORD, NULL, "record", &ss, NULL, NULL, &error))) {
-        fprintf(stderr, __FILE__": pa_simple_new() failed: %s\n", pa_strerror(error));
-        goto finish;
-    }
-    
-
-
-    //record and send
-    for (;;) {
+    tv.tv_sec = 0;
+    tv.tv_usec = 100;
+    event_init();
+    event_set(&ev,0,EV_PERSIST,rec_send,NULL);
+    /*evtimer_set(&ev, say_hello, NULL);*/
+    evtimer_add(&ev, &tv);
+    event_dispatch();
+    #if 0
+    while(1)
+    {
         uint8_t buf[BUFSIZE];
         /* Record some data ... */
-        if (pa_simple_read(s, buf, sizeof(buf), &error) < 0) {
+        //gettimeofday(&t1,NULL);
+        if (pa_simple_read(s, buf, sizeof(buf), &error) < 0)
+        {
             fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
-            goto finish;
+            if (s)
+                pa_simple_free(s);
+            if (sock_set_flag)
+                close(sockfd);
+            exit(1);
         }
+        /*gettimeofday(&t2,NULL);
+        printf("record:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
         /* And write it through sockfd */
-        if (loop_write(sockfd, buf, sizeof(buf)) != sizeof(buf)) {
+        //gettimeofday(&t1,NULL);
+        if (loop_write(sockfd, buf, sizeof(buf)) != sizeof(buf))
+        {
             fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
-            goto finish;
+            if (s)
+                pa_simple_free(s);
+            if (sock_set_flag)
+                close(sockfd);
+            exit(1);
         }
+        /*gettimeofday(&t2,NULL);
+        printf("send:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
     }
-
-    ret = 0;
-finish:
-    if (s)
-        pa_simple_free(s);
-    if (sock_set_flag)
-    	close(sockfd);
-    return ret;
+    #endif
 }
