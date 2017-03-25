@@ -26,25 +26,6 @@
 
 #define BUFSIZE 1024
 
-#if 0
-static ssize_t loop_write(int fd, const uint8_t *data, size_t size)
-{
-	ssize_t ret = 0;
-	while (size > 0)
-	{
-		ssize_t r;
-		if ((r = write(fd, data, size)) < 0)
-			return r;
-		if (r == 0)
-			break;
-		ret += r;
-		data = (const uint8_t*) data + r;
-		size -= (size_t) r;
-	}
-	return ret;
-}
-#endif
-
 void *get_in_addr(struct sockaddr *sa)					//get ipv4 or ipv6 address
 {
     if (sa->sa_family == AF_INET) {
@@ -75,7 +56,7 @@ Global declarations - actually should be inside main
 	int error;
 	//struct timeval t1,t2;
 	/*int wr_fp;							//to file*/
-	
+
 	uint8_t buf[BUFSIZE];
 	ssize_t num_bytes_recv;
 /****************************************************
@@ -84,14 +65,11 @@ End of Global declarations
 
 void recv_play(int fd, short event, void *arg)
 {
-	/*gettimeofday(&t1,NULL);*/
 	if((num_bytes_recv = recv(clifd,buf,sizeof buf,0))==-1)	//receive data
 	{
 		perror("recv");
 		exit(1);
 	}
-	/*gettimeofday(&t2,NULL);
-	printf("receive:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
 	if(!strcmp(buf,"EXIT"))
 	{
 		printf("call disconnected\n");
@@ -104,7 +82,6 @@ void recv_play(int fd, short event, void *arg)
 	else
 	{
 		/*... and play it */
-		//gettimeofday(&t1,NULL);
 		if (pa_simple_write(s, buf, (size_t) num_bytes_recv, &error) < 0)
 		{
 			fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
@@ -114,16 +91,7 @@ void recv_play(int fd, short event, void *arg)
 				close(sockfd);
 			exit(1);
 		}
-		/*gettimeofday(&t2,NULL);
-		printf("play:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
-		#if 0
-			/* And write it to STDOUT */
-			if (loop_write(STDOUT_FILENO, buf, sizeof(buf)) != sizeof(buf))
-			{
-				fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
-				goto finish;
-			}
-		#endif
+		
 	}
 }
 
@@ -213,71 +181,12 @@ int main(int argc, char const *argv[])
 
 	inet_ntop(cliaddr.ss_family,get_in_addr((struct sockaddr *)&cliaddr),ser_addr_str, sizeof ser_addr_str);		//change to char string. store in "s"
 	printf("server got connection from %s\n", ser_addr_str);
-#if 0	
-		if ((wr_fp = open("recording.raw", O_CREAT|O_WRONLY)) < 0) {
-        fprintf(stderr, __FILE__": open() failed: %s\n", strerror(errno));
-        goto finish;
-    }
-    if (dup2(wr_fp, STDOUT_FILENO) < 0) {
-        fprintf(stderr, __FILE__": dup2() failed: %s\n", strerror(errno));
-        goto finish;
-    }
-    close(wr_fp);
-#endif
-	
-#if 0	
-	while(1)
-	{
-		/*gettimeofday(&t1,NULL);*/
-		if((num_bytes_recv = recv(clifd,buf,sizeof buf,0))==-1)	//receive data
-		{
-			perror("recv");
-			exit(1);
-		}
-		/*gettimeofday(&t2,NULL);
-		printf("receive:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
-		if(!strcmp(buf,"EXIT"))
-		{
-			printf("call disconnected\n");
-			if(s)
-				pa_simple_free(s);
-			if (sockfd)
-				close(sockfd);
-			exit(1);
-		}
-		else
-		{
-			/*... and play it */
-			//gettimeofday(&t1,NULL);
-			if (pa_simple_write(s, buf, (size_t) num_bytes_recv, &error) < 0)
-			{
-				fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
-				if(s)
-					pa_simple_free(s);
-				if (sockfd)
-					close(sockfd);
-				exit(1);
-			}
-			/*gettimeofday(&t2,NULL);
-			printf("play:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
-			#if 0
-				/* And write it to STDOUT */
-				if (loop_write(STDOUT_FILENO, buf, sizeof(buf)) != sizeof(buf))
-				{
-					fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
-					goto finish;
-				}
-			#endif
-		}
-
-	}
-#endif
 
 	struct event ev;
 	struct timeval tv;
 
 	tv.tv_sec = 0;
-	tv.tv_usec = 100;
+	tv.tv_usec = 6000;
 
 	event_init();
 	event_set(&ev,0,EV_PERSIST,recv_play,NULL);

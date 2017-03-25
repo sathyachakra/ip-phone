@@ -95,10 +95,6 @@ void rec_send(int fd, short event, void *arg)
                 close(sockfd);
             exit(1);
         }
-        /*gettimeofday(&t2,NULL);
-        printf("record:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
-        /* And write it through sockfd */
-        //gettimeofday(&t1,NULL);
         if (loop_write(sockfd, buf, sizeof(buf)) != sizeof(buf))
         {
             fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
@@ -108,8 +104,6 @@ void rec_send(int fd, short event, void *arg)
                 close(sockfd);
             exit(1);
         }
-        /*gettimeofday(&t2,NULL);
-        printf("send:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
 }
 
 int main(int argc,char *argv[])
@@ -189,42 +183,12 @@ int main(int argc,char *argv[])
     struct timeval tv;
 
     tv.tv_sec = 0;
-    tv.tv_usec = 100;
+    tv.tv_usec = 6000;
     event_init();
     event_set(&ev,0,EV_PERSIST,rec_send,NULL);
     /*evtimer_set(&ev, say_hello, NULL);*/
     evtimer_add(&ev, &tv);
     event_dispatch();
-    #if 0
-    while(1)
-    {
-        uint8_t buf[BUFSIZE];
-        /* Record some data ... */
-        //gettimeofday(&t1,NULL);
-        if (pa_simple_read(s, buf, sizeof(buf), &error) < 0)
-        {
-            fprintf(stderr, __FILE__": pa_simple_read() failed: %s\n", pa_strerror(error));
-            if (s)
-                pa_simple_free(s);
-            if (sock_set_flag)
-                close(sockfd);
-            exit(1);
-        }
-        /*gettimeofday(&t2,NULL);
-        printf("record:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
-        /* And write it through sockfd */
-        //gettimeofday(&t1,NULL);
-        if (loop_write(sockfd, buf, sizeof(buf)) != sizeof(buf))
-        {
-            fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
-            if (s)
-                pa_simple_free(s);
-            if (sock_set_flag)
-                close(sockfd);
-            exit(1);
-        }
-        /*gettimeofday(&t2,NULL);
-        printf("send:%ldms\n",(t1.tv_usec-t2.tv_usec)/1000);*/
-    }
-    #endif
+
+    return 0;
 }
