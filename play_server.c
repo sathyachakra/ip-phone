@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <event.h>
+#include "g711.c"
 
 #define PORT "3490"  // the port users will be connecting to
 
@@ -57,7 +58,8 @@ Global declarations - actually should be inside main
 	//struct timeval t1,t2;
 	/*int wr_fp;							//to file*/
 
-	uint8_t buf[BUFSIZE];
+	uint16_t buf[BUFSIZE];
+	uint16_t playbuf[BUFSIZE];
 	ssize_t num_bytes_recv;
 /****************************************************
 End of Global declarations
@@ -82,7 +84,11 @@ void recv_play(int fd, short event, void *arg)
 	else
 	{
 		/*... and play it */
-		if (pa_simple_write(s, buf, (size_t) num_bytes_recv, &error) < 0)
+		for(int i=0;i<sizeof(buf)/sizeof(buf[0]);i++)
+		{
+			playbuf[i]=Snack_Mulaw2Lin(buf[i]);
+		}
+		if (pa_simple_write(s, playbuf, sizeof(playbuf)/*(size_t) num_bytes_recv*/, &error) < 0)
 		{
 			fprintf(stderr, __FILE__": pa_simple_write() failed: %s\n", pa_strerror(error));
 			if(s)
@@ -186,7 +192,7 @@ int main(int argc, char const *argv[])
 	struct timeval tv;
 
 	tv.tv_sec = 0;
-	tv.tv_usec = 6000;
+	tv.tv_usec = 1000;
 
 	event_init();
 	event_set(&ev,0,EV_PERSIST,recv_play,NULL);

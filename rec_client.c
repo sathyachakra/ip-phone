@@ -18,6 +18,7 @@
 #include <arpa/inet.h>
 #include <sys/time.h>
 #include <event.h>
+#include "g711.c"
 
 #define PORT "3490"
 #define BUFSIZE 1024
@@ -83,7 +84,8 @@ End of Global declarations
 
 void rec_send(int fd, short event, void *arg)
 {
-    uint8_t buf[BUFSIZE];
+    uint16_t buf[BUFSIZE];
+    uint16_t recbuf[BUFSIZE];
         /* Record some data ... */
         //gettimeofday(&t1,NULL);
         if (pa_simple_read(s, buf, sizeof(buf), &error) < 0)
@@ -95,7 +97,11 @@ void rec_send(int fd, short event, void *arg)
                 close(sockfd);
             exit(1);
         }
-        if (loop_write(sockfd, buf, sizeof(buf)) != sizeof(buf))
+        for(int i=0;i<sizeof(buf)/sizeof(buf[0]);i++)
+        {
+            recbuf[i]=Snack_Lin2Mulaw(buf[i]);
+        }
+        if (loop_write(sockfd, recbuf, sizeof(recbuf)) != sizeof(buf))
         {
             fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
             if (s)
@@ -183,7 +189,7 @@ int main(int argc,char *argv[])
     struct timeval tv;
 
     tv.tv_sec = 0;
-    tv.tv_usec = 6000;
+    tv.tv_usec = 1000;
     event_init();
     event_set(&ev,0,EV_PERSIST,rec_send,NULL);
     /*evtimer_set(&ev, say_hello, NULL);*/
